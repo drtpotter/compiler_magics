@@ -23,6 +23,15 @@ class Code_Helper:
         self.config=configparser.ConfigParser()
         self.config.read(configfile)
 
+        # Do we overlay environment variables?
+        self.overlay_environment()
+
+    def overlay_environment(self):
+        # Overlay any environment variables into the configuration
+        for key in self.config["DEFAULT"]:
+            if key in os.environ:
+                self.config["DEFAULT"][key] = os.environ[key]
+
     def modify_config(self, config_string):
         # Suck a new configuration into the string
         for token in config_string.split(":"):
