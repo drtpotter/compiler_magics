@@ -11,6 +11,10 @@ import sys
 import argparse
 import configparser
 import site
+import time
+
+# Define successful compilation
+SUCCESS=bool(0)
 
 class Code_Helper:
     
@@ -41,66 +45,85 @@ class Code_Helper:
         os.environ["OMP_NUM_THREADS"]=self.config["DEFAULT"]["OMP_NUM_THREADS"]
 
     def compile_code(self, fnames):
-        # Compile the code
-        logfile=os.path.join(self.run_dir,"compile.log")
-        fd=open(logfile, "w")
 
-        # Last fname is the one to get the name of output code
-        if isinstance(fnames,str):
-            filenames=[fnames]
-        else:
-            filenames=list(fnames)
-        objects=[]
-        # Loop through and compile each file
-        for fname in filenames:
-            (root,ext)=os.path.splitext(fname)
-            object_fname=root+".o"
-            objects.append(object_fname)
-            if ext==".f90":
-                commands=[self.config["DEFAULT"]["FC"],
-                          *self.config["DEFAULT"]["FCFLAGS"].split(),"-c",fname,"-o",object_fname]
-            elif ext==".cpp":
-                commands=[self.config["DEFAULT"]["CXX"],
-                          *self.config["DEFAULT"]["CXXFLAGS"].split(),"-c",fname,"-o",object_fname]
-            elif ext==".c":
-                commands=[self.config["DEFAULT"]["CC"],
-                          *self.config["DEFAULT"]["CFLAGS"].split(),"-c",fname,"-o",object_fname]
+        try:
+            # Return value
+            return_val = None
+
+            # Compile the code
+            logfile=os.path.join(self.run_dir,"compile.log")
+            fd=open(logfile, "w")
+
+            # Last fname is the one to get the name of output code
+            if isinstance(fnames,str):
+                filenames=[fnames]
+            else:
+                filenames=list(fnames)
+            objects=[]
+
+            # Did we error out?
+            had_error=False
+
+            # Loop through and compile each file
+            for fname in filenames:
+                (root,ext)=os.path.splitext(fname)
+                object_fname=root+".o"
+                objects.append(object_fname)
+                if ext==".f90":
+                    commands=[self.config["DEFAULT"]["FC"],
+                              *self.config["DEFAULT"]["FCFLAGS"].split(),"-c",fname,"-o",object_fname]
+                elif ext==".cpp":
+                    commands=[self.config["DEFAULT"]["CXX"],
+                              *self.config["DEFAULT"]["CXXFLAGS"].split(),"-c",fname,"-o",object_fname]
+                elif ext==".c":
+                    commands=[self.config["DEFAULT"]["CC"],
+                              *self.config["DEFAULT"]["CFLAGS"].split(),"-c",fname,"-o",object_fname]
+
+                if self.config["DEFAULT"]["VERBOSE"].lower()=="yes":
+                    print("Compiling: {}".format(" ".join(commands)))
+                result = subprocess.run(commands, stderr=fd, stdout=fd)
+                if result.returncode != SUCCESS:
+                    raise OSError(result.returncode, f"Error in compiling file {fname}", fname) 
+
+            # Program name is derived from last file
+            (program_name, ext)=os.path.splitext(filenames[-1])
+            
+            # Add an extension
+            program_name=program_name+".exe"
+            
+            # Now link the object files and return the name of the program
+            commands=[  self.config["DEFAULT"]["LINKER"],
+                        *self.config["DEFAULT"]["PRELINKFLAGS"].split(),
+                        *objects,
+                        "-o",
+                        program_name,
+                        *self.config["DEFAULT"]["POSTLINKFLAGS"].split()]
 
             if self.config["DEFAULT"]["VERBOSE"].lower()=="yes":
-                print("Compiling: {}".format(" ".join(commands)))
-            subprocess.run(commands, stderr=fd, stdout=fd)
+                print("Linking: {}".format(" ".join(commands)))
+            result = subprocess.run(commands, stderr=fd, stdout=fd)
+            if result.returncode != SUCCESS:
+                raise OSError(result.returncode, f"Error in linking file {program_name}", program_name) 
         
-        # Program name is derived from last file
-        (program_name, ext)=os.path.splitext(filenames[-1])
-        
-        # Add an extension
-        program_name=program_name+".exe"
-        
-        # Now link the object files and return the name of the program
-        commands=[  self.config["DEFAULT"]["LINKER"],
-                    *self.config["DEFAULT"]["LINKFLAGS"].split(),
-                    *objects,
-                    "-o",
-                    program_name]
+            # Set the Return value
+            return_val = program_name
 
-        if self.config["DEFAULT"]["VERBOSE"].lower()=="yes":
-            print("Linking: {}".format(" ".join(commands)))
-        subprocess.run(commands, stderr=fd, stdout=fd)
-        
-        # Close the file
-        fd.close()
+        except Exception as e:
+            print(str(e))
+        finally:
+            # Close the file
+            fd.close()
 
-        # Replay the entire logfile
-        with open(logfile, "r") as fd:
-            for line in fd:
-                print(line)
-        
-        return program_name
+            # Replay the entire logfile
+            self.recite_file(logfile)
+            
+        return return_val
     
     def run_text(self, text, fname, pargs=[]):
         self.save_code(text, fname)
         program=self.compile_code(fname)
-        self.exec_program(program, pargs)
+        if program is not None:
+            self.exec_program(program, pargs)
     
     def exec_program(self, program, pargs=[]):
         logfile=os.path.join(self.run_dir,"exec.log")
@@ -108,15 +131,23 @@ class Code_Helper:
             commands=[self.config['DEFAULT']['MPIEXEC'], *self.config['DEFAULT']['MPIEXECFLAGS'].split(), program, *pargs]
             if self.config["DEFAULT"]["VERBOSE"].lower()=="yes":
                 print("Running: {}".format(" ".join(commands)))
+            t1 = time.perf_counter()
             subprocess.run(commands, stderr=fd, stdout=fd)
-        
-        with open(logfile, "r") as fd:
-            for line in fd:
-                print(line)
+            t2 = time.perf_counter()
+       
+        # Open the logfile for writing
+        self.recite_file(logfile)
+        print(f"Execution of the program took {t2-t1:.4E} seconds")
     
     def save_code(self, text, fname):
         with open(fname, 'w') as fd:
             fd.write(text)
+
+    def recite_file(self, logfile):
+        with open(logfile, "r") as fd:
+            for line in fd:
+                print(line)
+
 
 # The class MUST call this class decorator at creation time
 @magics_class
