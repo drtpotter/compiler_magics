@@ -43,7 +43,6 @@ class Code_Helper:
     
     def post_init_tasks(self):
         # Run post_init_tasks
-        print(self.config)
         self.run_dir=str(self.config["DEFAULT"]["RUN_DIR"])
         try:
             os.makedirs(self.run_dir, exist_ok=True)
